@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Garage Plate Checker — Mobile</title>
+  <style>
+    :root{--bg:#0b0f14;--fg:#e8eef7;--mut:#9aa7bb;--card:#0f172a;--line:#1f2937;--ok:#16a34a;--err:#ef4444;--accent:#60a5fa}
+    html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    .app{min-height:100dvh;display:flex;flex-direction:column}
+    .topbar{position:sticky;top:0;z-index:10;background:var(--card);border-bottom:1px solid var(--line);padding:10px 12px;display:flex;gap:8px;align-items:center}
+    .brand{font-weight:700}
+    .tabs{margin-left:auto;display:flex;gap:8px}
+    .tab{padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:#111827;color:var(--fg);font-weight:600}
+    .tab.active{outline:2px solid var(--accent)}
+    .wrap{flex:1;display:flex}
+    .page{display:none;width:100%}
+    .page.active{display:block}
+    .card{padding:14px}
+    .mut{color:var(--mut)}
+    .col{display:flex;flex-direction:column;gap:10px}
+    input{width:100%;padding:18px 16px;border-radius:14px;border:1px solid var(--line);background:#0b1220;color:var(--fg);font-size:24px;letter-spacing:1px;text-align:center}
+    input::placeholder{color:#6b7280}
+    button{padding:16px;border-radius:14px;border:1px solid var(--line);background:#111827;color:var(--fg);font-size:20px;font-weight:700}
+    button.primary{background:#0b162a;border-color:#21406b}
+    .status{margin-top:12px;font-size:26px;font-weight:900;text-align:center;padding:14px;border-radius:14px;border:1px solid}
+    .ok{background:rgba(22,163,74,.16);border-color:rgba(22,163,74,.5);color:#a7f3d0}
+    .err{background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.5);color:#fecaca}
+    .note{font-size:12px;color:var(--mut)}
+    .list{padding:6px 0}
+    .item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .plate{font-variant-numeric:tabular-nums;font-weight:800}
+    .badge{margin-left:auto;padding:4px 10px;border-radius:999px;border:1px solid}
+    .badge.ok{background:rgba(22,163,74,.16);border-color:rgba(22,163,74,.5);color:#a7f3d0}
+    .badge.err{background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.5);color:#fecaca}
+    .toolbar{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:#0c1422;position:sticky;top:52px;z-index:5}
+    .toolbar input{font-size:16px;padding:10px}
+    .toolbar button{padding:10px 12px;font-size:16px}
+    .ghost{opacity:.7}
+    .test{display:none}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">Garage Plate Checker</div>
+    <div class="tabs">
+      <button class="tab active" id="tabCheck">Kiểm tra</button>
+      <button class="tab" id="tabLog">Danh sách</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <!-- PAGE: CHECK -->
+    <section id="pageCheck" class="page active">
+      <div class="card col">
+        <div class="mut">Nhập 4–5 số cuối của biển:</div>
+        <input id="inp" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="Ví dụ: 34567" autofocus />
+        <button id="btnCheck" class="primary">KIỂM TRA</button>
+        <div id="result" class="status ghost">Chưa kiểm</div>
+        <div class="note">Danh sách biển số <b>được hardcode</b> trong mã nguồn: <span class="ghost">const WHITELIST = [...];</span> Chỉ so khớp đúng chuỗi đã khai báo (khuyến nghị nhập 4/5 số cuối).</div>
+      </div>
+    </section>
+
+    <!-- PAGE: LOG -->
+    <section id="pageLog" class="page">
+      <div class="toolbar">
+        <input id="search" placeholder="Tìm trong danh sách đã kiểm (3+ ký tự)" />
+        <button id="btnExport">Xuất CSV</button>
+        <button id="btnClear">Xóa log</button>
+      </div>
+      <div class="list" id="list"></div>
+      <pre id="tests" class="test"></pre>
+    </section>
+  </div>
+</div>
+
+<script>
+  // ===== CONFIG (HARD-CODED WHITELIST) =====
+  // Điền 4 hoặc 5 số cuối cho mỗi xe, một mục một chuỗi.
+  // Ví dụ: ["34567","01234","6789"]
+  const WHITELIST = [
+    // TODO: Thay bằng danh sách thật của bạn
+    "86982","01234","12345","23456","56789","34567","45678","56788","09876"
+  ];
+
+  // ===== STATE =====
+  const state = {
+    wl: new Set(WHITELIST.map(function(x){ return String(x).replace(/[^0-9]+/g, ""); })),
+    log: loadJSON("gpc.log", []) // {ts, digits, ok}
+  };
+
+  // ===== HELPERS =====
+  function $(id){ return document.getElementById(id); }
+  function fmt(ts){ return new Date(ts).toLocaleString(); }
+  function saveJSON(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  function loadJSON(k,def){ try{ var v = JSON.parse(localStorage.getItem(k)||"null"); return (v===null? def : v); } catch(e){ return def; } }
+  function normalizeDigits(s){ return String(s).replace(/[^0-9]+/g, ""); }
+
+  function setPage(name){
+    var check = $("pageCheck"), log = $("pageLog");
+    var tCheck = $("tabCheck"), tLog = $("tabLog");
+    if(name==='log'){
+      log.classList.add('active'); check.classList.remove('active');
+      tLog.classList.add('active'); tCheck.classList.remove('active');
+      renderList();
+    } else {
+      check.classList.add('active'); log.classList.remove('active');
+      tCheck.classList.add('active'); tLog.classList.remove('active');
+      $("inp").focus();
+    }
+  }
+
+  function showResult(ok, digits){
+    var el = $("result");
+    el.className = "status "+(ok?"ok":"err");
+    el.textContent = (ok? "ĐƯỢC PHÉP" : "KHÔNG TRONG DS") + (digits? " • "+digits : "");
+  }
+
+  function doCheck(){
+    var raw = normalizeDigits($("inp").value.trim());
+    if(!raw){ $("result").className = "status err"; $("result").textContent = "Không có số"; return; }
+    // Chỉ khớp nếu đúng chuỗi trong whitelist (4 hoặc 5 số tùy bạn khai báo)
+    var ok = state.wl.has(raw);
+    state.log.unshift({ ts: Date.now(), digits: raw, ok: ok });
+    saveJSON("gpc.log", state.log);
+    showResult(ok, raw);
+    $("inp").value = ""; $("inp").focus();
+  }
+
+  function renderList(){
+    var q = $("search").value.trim();
+    var items = state.log.filter(function(r){ return !q || q.length<3 || (String(r.digits)+" "+(r.ok?"ok":"err")).indexOf(q) !== -1; });
+    var root = $("list"); root.innerHTML = "";
+    for(var i=0;i<items.length;i++){
+      var r = items[i];
+      var div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = '<div class="mut">'+fmt(r.ts)+'</div>'+
+                       '<div class="plate">'+r.digits+'</div>'+
+                       '<div class="badge '+(r.ok? 'ok':'err')+'">'+(r.ok? 'ĐƯỢC PHÉP':'KHÔNG CÓ')+'</div>';
+      root.appendChild(div);
+    }
+  }
+
+  function exportCSV(){
+    var header = ["timestamp","time_local","digits","allowed"]; 
+    var lines = [header.join(",")];
+    for(var i=0;i<state.log.length;i++){
+      var r = state.log[state.log.length-1-i]; // reverse
+      lines.push([r.ts, '"'+fmt(r.ts)+'"', '"'+r.digits+'"', (r.ok?1:0)].join(","));
+    }
+    // IMPORTANT: use \ufeff and \n, avoid raw newlines in string literals
+    var blob = new Blob(["\ufeff" + lines.join("\n")], {type:"text/csv;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = 'plate-log-'+Date.now()+'.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ===== EVENTS =====
+  $("tabCheck").onclick = function(){ setPage('check'); };
+  $("tabLog").onclick = function(){ setPage('log'); };
+  $("btnCheck").onclick = doCheck;
+  $("inp").addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); doCheck(); } });
+  $("search").oninput = function(){ renderList(); };
+  $("btnExport").onclick = exportCSV;
+  $("btnClear").onclick = function(){ if(confirm('Xóa toàn bộ log?')){ state.log=[]; saveJSON('gpc.log', state.log); renderList(); } };
+
+  // ===== TESTS =====
+  function runTests(){
+    var out = [];
+    function t(name, fn){
+      try{ fn(); out.push('✔ '+name); }
+      catch(e){ out.push('✘ '+name+' — '+e.message); }
+    }
+    function eq(a,b){ if(a!==b) throw new Error('Expected '+String(b)+' but got '+String(a)); }
+
+    // Test normalizeDigits
+    t('normalizeDigits strips non-digits', function(){ eq(normalizeDigits('34.567'), '34567'); });
+    t('normalizeDigits keeps digits only', function(){ eq(normalizeDigits('  01234  '), '01234'); });
+
+    // Test whitelist match (exact)
+    t('whitelist contains 34567', function(){ if(!state.wl.has('34567')) throw new Error('not found'); });
+    t('whitelist does not contain 99999', function(){ if(state.wl.has('99999')) throw new Error('should not contain'); });
+
+    // Test logging + export (basic shape)
+    var before = state.log.length;
+    state.log.unshift({ts: 1730000000000, digits: '1234', ok: true});
+    if(state.log.length !== before+1) throw new Error('log not appended');
+
+    // Check CSV generation does not throw and produces a Blob URL
+    var header = ["timestamp","time_local","digits","allowed"]; var lines=[header.join(","), '1,"t","d",1'];
+    var testBlob = new Blob(["\ufeff" + lines.join("\n")], {type:"text/csv;charset=utf-8"});
+    if(!(testBlob instanceof Blob)) throw new Error('CSV blob failed');
+
+    $("tests").textContent = out.join("\n");
+    console.log('[Tests]', "\n"+out.join("\n"));
+  }
+
+  // ===== INIT =====
+  (function(){
+    if(location.hash.replace('#/','')==='log'){ setPage('log'); } else { setPage('check'); }
+    // Run lightweight tests in console for quick sanity
+    runTests();
+  })();
+</script>
+</body>
+</html>
